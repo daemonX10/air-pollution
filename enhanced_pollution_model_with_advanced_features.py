@@ -201,7 +201,7 @@ def create_comprehensive_features(df, is_training=True):
     # Create industrial proxy based on geographic clustering and pollution patterns
     coords = df_enhanced[['latitude', 'longitude']].values
     try:
-        kmeans_industrial = KMeans(n_clusters=20, random_state=42, n_init=10)
+        kmeans_industrial = KMeans(n_clusters=10, random_state=42, n_init=5, max_iter=100)
         industrial_clusters = kmeans_industrial.fit_predict(coords)
         
         # Calculate industrial proxy as average pollution in each cluster
@@ -388,7 +388,7 @@ class RecursiveFeatureOptimizer:
         
         return np.mean(scores)
     
-    def forward_selection(self, X, y, max_features=50):
+    def forward_selection(self, X, y, max_features=20):
         """Forward feature selection"""
         print("Starting forward feature selection...")
         
@@ -401,9 +401,12 @@ class RecursiveFeatureOptimizer:
             
             print(f"Round {i+1}: Testing {len(available_features)} remaining features...")
             
-            for feature in available_features:
-                test_features = selected_features + [feature]
-                score = self.evaluate_features(X, y, test_features)
+            # Test only a subset of features for speed
+            test_features = available_features[:min(10, len(available_features))]
+            
+            for feature in test_features:
+                test_features_list = selected_features + [feature]
+                score = self.evaluate_features(X, y, test_features_list)
                 
                 if score < best_score:
                     best_score = score
