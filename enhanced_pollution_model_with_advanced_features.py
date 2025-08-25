@@ -12,12 +12,106 @@ from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.cluster import KMeans
 from sklearn.feature_selection import SelectKBest, f_regression, RFE
+from scipy import stats
 import lightgbm as lgb
 import warnings
 warnings.filterwarnings('ignore')
 
+# Set up plotting style
+plt.style.use('default')
+sns.set_palette("husl")
+plt.rcParams['figure.figsize'] = (12, 8)
+plt.rcParams['font.size'] = 10
+
 # Load and clean data
 df = pd.read_csv('d:/competition/air pollution/phase 1/train.csv')
+
+# =====================================
+# 0. INITIAL DATA EXPLORATION AND VISUALIZATION
+# =====================================
+
+def create_initial_visualizations(df):
+    """Create comprehensive initial data visualizations"""
+    print("Creating initial data exploration visualizations...")
+    
+    # Create a figure with multiple subplots
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle('Initial Data Exploration', fontsize=16, fontweight='bold')
+    
+    # 1. Distribution of pollution values
+    axes[0, 0].hist(df['pollution_value'], bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+    axes[0, 0].set_title('Distribution of Pollution Values')
+    axes[0, 0].set_xlabel('Pollution Value')
+    axes[0, 0].set_ylabel('Frequency')
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # 2. Pollution by hour
+    hourly_pollution = df.groupby('hour')['pollution_value'].mean()
+    axes[0, 1].plot(hourly_pollution.index, hourly_pollution.values, marker='o', linewidth=2, markersize=6)
+    axes[0, 1].set_title('Average Pollution by Hour')
+    axes[0, 1].set_xlabel('Hour of Day')
+    axes[0, 1].set_ylabel('Average Pollution')
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].set_xticks(range(0, 24, 4))
+    
+    # 3. Pollution by day of week
+    dow_pollution = df.groupby('day_of_week')['pollution_value'].mean()
+    days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    axes[0, 2].bar(range(7), dow_pollution.values, color='lightcoral', alpha=0.7, edgecolor='black')
+    axes[0, 2].set_title('Average Pollution by Day of Week')
+    axes[0, 2].set_xlabel('Day of Week')
+    axes[0, 2].set_ylabel('Average Pollution')
+    axes[0, 2].set_xticks(range(7))
+    axes[0, 2].set_xticklabels(days, rotation=45)
+    axes[0, 2].grid(True, alpha=0.3)
+    
+    # 4. Geographic distribution
+    scatter = axes[1, 0].scatter(df['longitude'], df['latitude'], 
+                                c=df['pollution_value'], cmap='viridis', 
+                                alpha=0.6, s=20)
+    axes[1, 0].set_title('Geographic Distribution of Pollution')
+    axes[1, 0].set_xlabel('Longitude')
+    axes[1, 0].set_ylabel('Latitude')
+    plt.colorbar(scatter, ax=axes[1, 0], label='Pollution Value')
+    
+    # 5. Pollution by month
+    monthly_pollution = df.groupby('month')['pollution_value'].mean()
+    axes[1, 1].plot(monthly_pollution.index, monthly_pollution.values, 
+                   marker='s', linewidth=2, markersize=8, color='green')
+    axes[1, 1].set_title('Average Pollution by Month')
+    axes[1, 1].set_xlabel('Month')
+    axes[1, 1].set_ylabel('Average Pollution')
+    axes[1, 1].grid(True, alpha=0.3)
+    axes[1, 1].set_xticks(range(1, 13))
+    
+    # 6. Box plot of pollution by hour groups
+    df_temp = df.copy()
+    df_temp['hour_group'] = pd.cut(df_temp['hour'], bins=[0, 6, 12, 18, 24], 
+                                  labels=['Night', 'Morning', 'Afternoon', 'Evening'])
+    df_temp.boxplot(column='pollution_value', by='hour_group', ax=axes[1, 2])
+    axes[1, 2].set_title('Pollution Distribution by Time of Day')
+    axes[1, 2].set_xlabel('Time Period')
+    axes[1, 2].set_ylabel('Pollution Value')
+    
+    plt.tight_layout()
+    plt.savefig('d:/competition/air pollution/initial_data_exploration.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # Additional correlation heatmap
+    plt.figure(figsize=(12, 8))
+    correlation_features = ['pollution_value', 'latitude', 'longitude', 'hour', 'day_of_week', 'month', 'day_of_year']
+    corr_matrix = df[correlation_features].corr()
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, 
+                square=True, linewidths=0.5, cbar_kws={"shrink": .8})
+    plt.title('Correlation Matrix of Base Features', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig('d:/competition/air pollution/initial_correlation_matrix.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    return df
+
+# Create initial visualizations
+df = create_initial_visualizations(df)
 
 # =====================================
 # 1. ADVANCED DATA CLEANING
@@ -35,12 +129,48 @@ def advanced_data_cleaning(df):
     upper_bound = Q3 + 1.5 * IQR
     
     # Cap extreme outliers instead of removing them
+    original_values = df_clean['pollution_value'].copy()
     df_clean['pollution_value'] = np.clip(df_clean['pollution_value'], 
                                          lower_bound, 
                                          np.percentile(df_clean['pollution_value'], 99))
     
     print(f"Dataset shape after cleaning: {df_clean.shape}")
     print(f"Outliers capped at: {np.percentile(df_clean['pollution_value'], 99):.2f}")
+    
+    # Visualize outlier detection and cleaning
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig.suptitle('Data Cleaning and Outlier Detection', fontsize=14, fontweight='bold')
+    
+    # Before cleaning
+    axes[0].hist(original_values, bins=50, alpha=0.7, color='red', edgecolor='black')
+    axes[0].axvline(lower_bound, color='blue', linestyle='--', label=f'Lower bound: {lower_bound:.2f}')
+    axes[0].axvline(upper_bound, color='blue', linestyle='--', label=f'Upper bound: {upper_bound:.2f}')
+    axes[0].set_title('Before Outlier Treatment')
+    axes[0].set_xlabel('Pollution Value')
+    axes[0].set_ylabel('Frequency')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    
+    # After cleaning
+    axes[1].hist(df_clean['pollution_value'], bins=50, alpha=0.7, color='green', edgecolor='black')
+    axes[1].set_title('After Outlier Treatment')
+    axes[1].set_xlabel('Pollution Value')
+    axes[1].set_ylabel('Frequency')
+    axes[1].grid(True, alpha=0.3)
+    
+    # Box plots comparison
+    data_comparison = pd.DataFrame({
+        'Original': original_values,
+        'Cleaned': df_clean['pollution_value']
+    })
+    data_comparison.boxplot(ax=axes[2])
+    axes[2].set_title('Box Plot Comparison')
+    axes[2].set_ylabel('Pollution Value')
+    axes[2].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('d:/competition/air pollution/data_cleaning_visualization.png', dpi=300, bbox_inches='tight')
+    plt.show()
     
     return df_clean
 
@@ -70,17 +200,24 @@ def create_comprehensive_features(df, is_training=True):
     # 1. Industrial and Traffic Proxies
     # Create industrial proxy based on geographic clustering and pollution patterns
     coords = df_enhanced[['latitude', 'longitude']].values
-    kmeans_industrial = KMeans(n_clusters=20, random_state=42, n_init=10)
-    industrial_clusters = kmeans_industrial.fit_predict(coords)
-    
-    # Calculate industrial proxy as average pollution in each cluster
-    if is_training and 'pollution_value' in df_enhanced.columns:
-        cluster_pollution = df_enhanced.groupby(industrial_clusters)['pollution_value'].mean()
-        df_enhanced['industrial_proxy'] = industrial_clusters
-        df_enhanced['industrial_proxy'] = df_enhanced['industrial_proxy'].map(cluster_pollution)
-    else:
-        # For test data, use pre-computed values or approximation
-        df_enhanced['industrial_proxy'] = industrial_clusters * 0.1 + np.random.normal(0, 0.05, len(df_enhanced))
+    try:
+        kmeans_industrial = KMeans(n_clusters=20, random_state=42, n_init=10)
+        industrial_clusters = kmeans_industrial.fit_predict(coords)
+        
+        # Calculate industrial proxy as average pollution in each cluster
+        if is_training and 'pollution_value' in df_enhanced.columns:
+            cluster_pollution = df_enhanced.groupby(industrial_clusters)['pollution_value'].mean()
+            df_enhanced['industrial_proxy'] = pd.Series(industrial_clusters).map(cluster_pollution).values
+        else:
+            # For test data, use pre-computed values or approximation
+            df_enhanced['industrial_proxy'] = industrial_clusters * 0.1 + np.random.normal(0, 0.05, len(df_enhanced))
+    except Exception as e:
+        print(f"Warning: KMeans clustering failed, using alternative industrial proxy: {e}")
+        # Simple fallback: use geographic distance from center
+        lat_center = df_enhanced['latitude'].mean()
+        lon_center = df_enhanced['longitude'].mean()
+        df_enhanced['industrial_proxy'] = np.sqrt((df_enhanced['latitude'] - lat_center)**2 + 
+                                                 (df_enhanced['longitude'] - lon_center)**2)
     
     # Traffic proxy based on hour patterns and location
     rush_hour_multiplier = df_enhanced['hour'].map({
@@ -149,7 +286,7 @@ def create_comprehensive_features(df, is_training=True):
     lat_median = df_enhanced['latitude'].median()
     lon_median = df_enhanced['longitude'].median()
     distance_from_center = np.sqrt((df_enhanced['latitude'] - lat_median)**2 + (df_enhanced['longitude'] - lon_median)**2)
-    df_enhanced['emission_hotspot'] = (distance_from_center < distance_from_center.quantile(0.2)).astype(int)
+    df_enhanced['emission_hotspot'] = (distance_from_center < np.percentile(distance_from_center, 20)).astype(int)
     
     # 15. Time cycle combinations
     df_enhanced['time_cycle_combo'] = df_enhanced['hour_sin'] * df_enhanced['day_week_cos'] * df_enhanced['month_sin']
@@ -158,10 +295,10 @@ def create_comprehensive_features(df, is_training=True):
     df_enhanced['industrial_sin_hour'] = df_enhanced['industrial_proxy'] * np.sin(2 * np.pi * df_enhanced['hour'] / 24)
     
     # 17. Distance to industry minimum (approximated)
-    df_enhanced['distance_to_industry_min'] = np.min([
-        np.abs(df_enhanced['latitude'] - df_enhanced['latitude'].quantile(0.1)),
-        np.abs(df_enhanced['longitude'] - df_enhanced['longitude'].quantile(0.1))
-    ], axis=0)
+    df_enhanced['distance_to_industry_min'] = np.minimum(
+        np.abs(df_enhanced['latitude'] - np.percentile(df_enhanced['latitude'], 10)),
+        np.abs(df_enhanced['longitude'] - np.percentile(df_enhanced['longitude'], 10))
+    )
     
     # 18. Traffic-industrial combinations
     df_enhanced['traffic_ind_combo'] = df_enhanced['traffic_proxy'] * df_enhanced['industrial_proxy']
@@ -199,9 +336,6 @@ def create_comprehensive_features(df, is_training=True):
     
     return df_enhanced
 
-# =====================================
-# 3. RECURSIVE FEATURE SELECTION CLASS
-# =====================================
 
 class RecursiveFeatureOptimizer:
     def __init__(self, base_model, scoring='rmse', cv_folds=3):
@@ -373,6 +507,99 @@ if missing_features:
     print(f"Missing features: {missing_features}")
 
 # =====================================
+# 3.5. FEATURE ENGINEERING VISUALIZATION
+# =====================================
+
+def visualize_feature_engineering(df_enhanced, new_features):
+    """Visualize the newly created features"""
+    print("Creating feature engineering visualizations...")
+    
+    # Select some key features to visualize
+    key_features = ['industrial_proxy', 'traffic_proxy', 'meteo_season', 
+                   'hour_sin', 'hour_cos', 'emission_hotspot']
+    
+    # Filter to features that actually exist
+    available_key_features = [f for f in key_features if f in df_enhanced.columns]
+    
+    if len(available_key_features) >= 4:
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig.suptitle('Feature Engineering Visualization', fontsize=16, fontweight='bold')
+        
+        # 1. Industrial proxy vs pollution
+        if 'industrial_proxy' in available_key_features and 'pollution_value' in df_enhanced.columns:
+            axes[0, 0].scatter(df_enhanced['industrial_proxy'], df_enhanced['pollution_value'], 
+                              alpha=0.5, s=10)
+            axes[0, 0].set_title('Industrial Proxy vs Pollution')
+            axes[0, 0].set_xlabel('Industrial Proxy')
+            axes[0, 0].set_ylabel('Pollution Value')
+            axes[0, 0].grid(True, alpha=0.3)
+        
+        # 2. Traffic proxy distribution
+        if 'traffic_proxy' in available_key_features:
+            axes[0, 1].hist(df_enhanced['traffic_proxy'], bins=50, alpha=0.7, 
+                           color='orange', edgecolor='black')
+            axes[0, 1].set_title('Traffic Proxy Distribution')
+            axes[0, 1].set_xlabel('Traffic Proxy')
+            axes[0, 1].set_ylabel('Frequency')
+            axes[0, 1].grid(True, alpha=0.3)
+        
+        # 3. Meteorological season pattern
+        if 'meteo_season' in available_key_features:
+            axes[0, 2].plot(df_enhanced['month'], df_enhanced['meteo_season'], 
+                           'o', alpha=0.3, markersize=3)
+            axes[0, 2].set_title('Meteorological Season Pattern')
+            axes[0, 2].set_xlabel('Month')
+            axes[0, 2].set_ylabel('Meteo Season Value')
+            axes[0, 2].grid(True, alpha=0.3)
+        
+        # 4. Cyclical hour features
+        if 'hour_sin' in available_key_features and 'hour_cos' in available_key_features:
+            axes[1, 0].scatter(df_enhanced['hour_sin'], df_enhanced['hour_cos'], 
+                              c=df_enhanced['hour'], cmap='viridis', s=10, alpha=0.6)
+            axes[1, 0].set_title('Cyclical Hour Encoding')
+            axes[1, 0].set_xlabel('Hour Sin')
+            axes[1, 0].set_ylabel('Hour Cos')
+            axes[1, 0].grid(True, alpha=0.3)
+        
+        # 5. Emission hotspots
+        if 'emission_hotspot' in available_key_features and 'pollution_value' in df_enhanced.columns:
+            hotspot_data = df_enhanced.groupby('emission_hotspot')['pollution_value'].mean()
+            axes[1, 1].bar(['Non-Hotspot', 'Hotspot'], hotspot_data.values, 
+                          color=['lightblue', 'red'], alpha=0.7, edgecolor='black')
+            axes[1, 1].set_title('Pollution in Emission Hotspots')
+            axes[1, 1].set_ylabel('Average Pollution')
+            axes[1, 1].grid(True, alpha=0.3)
+        
+        # 6. Feature correlation with target
+        if 'pollution_value' in df_enhanced.columns:
+            correlations = []
+            feature_names = []
+            for feature in available_key_features:
+                if feature in df_enhanced.columns:
+                    corr = df_enhanced[feature].corr(df_enhanced['pollution_value'])
+                    if not np.isnan(corr):
+                        correlations.append(corr)
+                        feature_names.append(feature)
+            
+            if correlations:
+                axes[1, 2].barh(range(len(correlations)), correlations, 
+                               color=['green' if x > 0 else 'red' for x in correlations], 
+                               alpha=0.7)
+                axes[1, 2].set_yticks(range(len(feature_names)))
+                axes[1, 2].set_yticklabels(feature_names, rotation=0)
+                axes[1, 2].set_title('Feature Correlation with Pollution')
+                axes[1, 2].set_xlabel('Correlation Coefficient')
+                axes[1, 2].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('d:/competition/air pollution/feature_engineering_visualization.png', 
+                   dpi=300, bbox_inches='tight')
+        plt.show()
+
+# Create feature engineering visualizations
+visualize_feature_engineering(df_enhanced, new_features)
+
+# =====================================
 # 5. DATA PREPARATION
 # =====================================
 
@@ -404,7 +631,7 @@ print("AUTOMATED FEATURE SELECTION")
 print("="*60)
 
 # Initialize optimizer with RandomForest for speed
-base_model = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
+base_model = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=1)
 optimizer = RecursiveFeatureOptimizer(base_model, cv_folds=3)
 
 # Method 1: Statistical feature selection first
@@ -429,6 +656,93 @@ if final_features is None:
 print(f"Final optimized features: {len(final_features)}")
 
 print(f"\nSelected features: {final_features}")
+
+# =====================================
+# 6.5. FEATURE SELECTION VISUALIZATION
+# =====================================
+
+def visualize_feature_selection(all_features, stat_features, forward_features, final_features):
+    """Visualize the feature selection process"""
+    print("Creating feature selection visualizations...")
+    
+    # Feature selection progression
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('Feature Selection Process', fontsize=16, fontweight='bold')
+    
+    # 1. Feature count progression
+    stages = ['Original', 'Statistical', 'Forward', 'Final']
+    counts = [len(all_features), len(stat_features), 
+              len(forward_features) if forward_features else 0, 
+              len(final_features) if final_features else 0]
+    
+    bars = axes[0, 0].bar(stages, counts, color=['skyblue', 'lightgreen', 'orange', 'red'], 
+                         alpha=0.7, edgecolor='black')
+    axes[0, 0].set_title('Feature Count at Each Stage')
+    axes[0, 0].set_ylabel('Number of Features')
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # Add value labels on bars
+    for bar, count in zip(bars, counts):
+        axes[0, 0].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, 
+                       str(count), ha='center', va='bottom', fontweight='bold')
+    
+    # 2. Feature selection overlap (Venn diagram style)
+    if final_features and stat_features:
+        stat_set = set(stat_features)
+        final_set = set(final_features)
+        
+        # Create a simple representation
+        categories = ['Statistical Only', 'Both', 'Final Only']
+        stat_only = len(stat_set - final_set)
+        both = len(stat_set & final_set)
+        final_only = len(final_set - stat_set)
+        values = [stat_only, both, final_only]
+        
+        axes[0, 1].pie(values, labels=categories, autopct='%1.1f%%', 
+                      colors=['lightblue', 'yellow', 'lightcoral'])
+        axes[0, 1].set_title('Feature Selection Overlap')
+    
+    # 3. Feature importance distribution (if we have LightGBM model later)
+    # Placeholder for now
+    axes[1, 0].text(0.5, 0.5, 'Feature Importance\n(Will be updated after training)', 
+                   ha='center', va='center', transform=axes[1, 0].transAxes, 
+                   fontsize=12, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray"))
+    axes[1, 0].set_title('Feature Importance Distribution')
+    
+    # 4. Feature type distribution
+    if final_features:
+        feature_types = {'Base': 0, 'Cyclical': 0, 'Interaction': 0, 'Advanced': 0}
+        
+        base_features_set = {'latitude', 'longitude', 'day_of_year', 'day_of_week', 'hour', 'month'}
+        cyclical_features_set = {'hour_sin', 'hour_cos', 'month_sin', 'month_cos', 
+                               'day_year_sin', 'day_year_cos', 'day_week_sin', 'day_week_cos'}
+        
+        for feature in final_features:
+            if feature in base_features_set:
+                feature_types['Base'] += 1
+            elif feature in cyclical_features_set:
+                feature_types['Cyclical'] += 1
+            elif 'interaction' in feature or '_int' in feature:
+                feature_types['Interaction'] += 1
+            else:
+                feature_types['Advanced'] += 1
+        
+        # Remove empty categories
+        feature_types = {k: v for k, v in feature_types.items() if v > 0}
+        
+        if feature_types:
+            axes[1, 1].pie(feature_types.values(), labels=feature_types.keys(), 
+                          autopct='%1.1f%%', colors=['gold', 'lightcyan', 'pink', 'lightgreen'])
+            axes[1, 1].set_title('Selected Feature Types')
+    
+    plt.tight_layout()
+    plt.savefig('d:/competition/air pollution/feature_selection_visualization.png', 
+               dpi=300, bbox_inches='tight')
+    plt.show()
+
+# Create feature selection visualizations
+visualize_feature_selection(existing_features, stat_selected_features, 
+                          forward_features, final_features)
 
 # =====================================
 # 7. MODEL TRAINING WITH OPTIMIZED FEATURES
@@ -462,6 +776,57 @@ def evaluate_model(y_true, y_pred, model_name="Model"):
     print(f"R²: {r2:.4f}")
     
     return {'rmse': rmse, 'mae': mae, 'r2': r2}
+
+def plot_prediction_analysis(y_true, y_pred, model_name, save_path=None):
+    """Create comprehensive prediction analysis plots"""
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle(f'{model_name} - Prediction Analysis', fontsize=16, fontweight='bold')
+    
+    # 1. Actual vs Predicted scatter plot
+    axes[0, 0].scatter(y_true, y_pred, alpha=0.5, s=20)
+    min_val = min(y_true.min(), y_pred.min())
+    max_val = max(y_true.max(), y_pred.max())
+    axes[0, 0].plot([min_val, max_val], [min_val, max_val], 'r--', lw=2)
+    axes[0, 0].set_xlabel('Actual Values')
+    axes[0, 0].set_ylabel('Predicted Values')
+    axes[0, 0].set_title('Actual vs Predicted')
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # Add R² to the plot
+    r2 = r2_score(y_true, y_pred)
+    axes[0, 0].text(0.05, 0.95, f'R² = {r2:.4f}', transform=axes[0, 0].transAxes,
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+                   verticalalignment='top')
+    
+    # 2. Residuals plot
+    residuals = y_true - y_pred
+    axes[0, 1].scatter(y_pred, residuals, alpha=0.5, s=20)
+    axes[0, 1].axhline(y=0, color='r', linestyle='--')
+    axes[0, 1].set_xlabel('Predicted Values')
+    axes[0, 1].set_ylabel('Residuals')
+    axes[0, 1].set_title('Residuals Plot')
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # 3. Residuals distribution
+    axes[1, 0].hist(residuals, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+    axes[1, 0].axvline(residuals.mean(), color='red', linestyle='--', 
+                      label=f'Mean: {residuals.mean():.4f}')
+    axes[1, 0].set_xlabel('Residuals')
+    axes[1, 0].set_ylabel('Frequency')
+    axes[1, 0].set_title('Distribution of Residuals')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # 4. Q-Q plot for residuals normality
+    from scipy import stats
+    stats.probplot(residuals, dist="norm", plot=axes[1, 1])
+    axes[1, 1].set_title('Q-Q Plot of Residuals')
+    axes[1, 1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
 
 models = {}
 predictions = {}
@@ -501,6 +866,10 @@ predictions['lgb_test'] = lgb_model.predict(X_test_opt)
 
 lgb_results = evaluate_model(y_val, predictions['lgb_val'], "Optimized LightGBM")
 
+# Create prediction analysis for LightGBM
+plot_prediction_analysis(y_val, predictions['lgb_val'], "LightGBM", 
+                        'd:/competition/air pollution/lgb_prediction_analysis.png')
+
 # 2. Random Forest with optimized features  
 print("\nTraining Random Forest...")
 rf_model = RandomForestRegressor(
@@ -510,7 +879,7 @@ rf_model = RandomForestRegressor(
     min_samples_leaf=5,
     max_features='sqrt',
     random_state=42,
-    n_jobs=-1
+    n_jobs=1
 )
 
 rf_model.fit(X_train_scaled, y_train)
@@ -519,6 +888,10 @@ predictions['rf_val'] = rf_model.predict(X_val_scaled)
 predictions['rf_test'] = rf_model.predict(X_test_scaled)
 
 rf_results = evaluate_model(y_val, predictions['rf_val'], "Optimized Random Forest")
+
+# Create prediction analysis for Random Forest
+plot_prediction_analysis(y_val, predictions['rf_val'], "Random Forest", 
+                        'd:/competition/air pollution/rf_prediction_analysis.png')
 
 # 3. Huber Regressor
 print("\nTraining Huber Regressor...")
@@ -530,6 +903,10 @@ predictions['huber_val'] = huber_model.predict(X_val_scaled)
 predictions['huber_test'] = huber_model.predict(X_test_scaled)
 
 huber_results = evaluate_model(y_val, predictions['huber_val'], "Optimized Huber")
+
+# Create prediction analysis for Huber
+plot_prediction_analysis(y_val, predictions['huber_val'], "Huber Regressor", 
+                        'd:/competition/air pollution/huber_prediction_analysis.png')
 
 # =====================================
 # 8. ENSEMBLE AND FINAL EVALUATION
@@ -572,6 +949,97 @@ ensemble_test = (
 
 ensemble_results = evaluate_model(y_val, ensemble_val, "Optimized Ensemble")
 
+# Create prediction analysis for Ensemble
+plot_prediction_analysis(y_val, ensemble_val, "Ensemble Model", 
+                        'd:/competition/air pollution/ensemble_prediction_analysis.png')
+
+# =====================================
+# 8.5. MODEL COMPARISON VISUALIZATION
+# =====================================
+
+def create_model_comparison_visualization(val_scores, test_results):
+    """Create comprehensive model comparison visualizations"""
+    print("Creating model comparison visualizations...")
+    
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('Model Performance Comparison', fontsize=16, fontweight='bold')
+    
+    # 1. Validation RMSE comparison
+    models = list(val_scores.keys())
+    val_rmse = list(val_scores.values())
+    
+    bars1 = axes[0, 0].bar(models, val_rmse, color=['lightblue', 'lightgreen', 'orange'], 
+                          alpha=0.7, edgecolor='black')
+    axes[0, 0].set_title('Validation RMSE Comparison')
+    axes[0, 0].set_ylabel('RMSE')
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # Add value labels
+    for bar, value in zip(bars1, val_rmse):
+        axes[0, 0].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001, 
+                       f'{value:.4f}', ha='center', va='bottom', fontweight='bold')
+    
+    # 2. Test set performance comparison
+    test_models = list(test_results.keys())
+    test_rmse = [test_results[model]['rmse'] for model in test_models]
+    test_r2 = [test_results[model]['r2'] for model in test_models]
+    
+    x = np.arange(len(test_models))
+    width = 0.35
+    
+    bars2 = axes[0, 1].bar(x - width/2, test_rmse, width, label='RMSE', 
+                          color='red', alpha=0.7)
+    ax2 = axes[0, 1].twinx()
+    bars3 = ax2.bar(x + width/2, test_r2, width, label='R²', 
+                   color='blue', alpha=0.7)
+    
+    axes[0, 1].set_xlabel('Models')
+    axes[0, 1].set_ylabel('RMSE', color='red')
+    ax2.set_ylabel('R²', color='blue')
+    axes[0, 1].set_title('Test Set Performance')
+    axes[0, 1].set_xticks(x)
+    axes[0, 1].set_xticklabels(test_models, rotation=45)
+    
+    # Add legends
+    axes[0, 1].legend(loc='upper left')
+    ax2.legend(loc='upper right')
+    
+    # 3. Model weights visualization
+    weights_data = list(weights.values())
+    weight_labels = list(weights.keys())
+    
+    axes[1, 0].pie(weights_data, labels=weight_labels, autopct='%1.3f', 
+                  colors=['lightcoral', 'lightblue', 'lightgreen'])
+    axes[1, 0].set_title('Ensemble Model Weights')
+    
+    # 4. Performance metrics heatmap
+    metrics_data = []
+    metric_names = ['RMSE', 'MAE', 'R²']
+    
+    for model in test_models:
+        if model in test_results:
+            metrics_data.append([
+                test_results[model]['rmse'],
+                test_results[model]['mae'],
+                test_results[model]['r2']
+            ])
+    
+    if metrics_data:
+        metrics_df = pd.DataFrame(metrics_data, index=test_models, columns=metric_names)
+        # Normalize for better visualization (except R² which is already scaled)
+        metrics_df_norm = metrics_df.copy()
+        metrics_df_norm['RMSE'] = (metrics_df['RMSE'] - metrics_df['RMSE'].min()) / (metrics_df['RMSE'].max() - metrics_df['RMSE'].min())
+        metrics_df_norm['MAE'] = (metrics_df['MAE'] - metrics_df['MAE'].min()) / (metrics_df['MAE'].max() - metrics_df['MAE'].min())
+        
+        sns.heatmap(metrics_df_norm.T, annot=metrics_df.T, fmt='.4f', 
+                   cmap='RdYlGn_r', ax=axes[1, 1], cbar_kws={'label': 'Normalized Score'})
+        axes[1, 1].set_title('Performance Metrics Heatmap')
+    
+    plt.tight_layout()
+    plt.savefig('d:/competition/air pollution/model_comparison_visualization.png', 
+               dpi=300, bbox_inches='tight')
+    plt.show()
+
 # =====================================
 # 9. FINAL TEST EVALUATION
 # =====================================
@@ -590,6 +1058,9 @@ final_models = {
 test_results = {}
 for name, pred in final_models.items():
     test_results[name] = evaluate_model(y_test, pred, name)
+
+# Create model comparison visualization
+create_model_comparison_visualization(val_scores, test_results)
 
 # Find best model
 best_model = min(test_results.keys(), key=lambda x: test_results[x]['rmse'])
@@ -633,6 +1104,121 @@ submission_df.to_csv('d:/competition/air pollution/enhanced_automated_submission
 print("Enhanced submission file saved!")
 
 # =====================================
+# 10.5. SUBMISSION ANALYSIS VISUALIZATION
+# =====================================
+
+def create_submission_analysis(submission_predictions, y_train):
+    """Create submission analysis visualizations"""
+    print("Creating submission analysis visualizations...")
+    
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('Submission Analysis', fontsize=16, fontweight='bold')
+    
+    # 1. Distribution comparison
+    axes[0, 0].hist(y_train, bins=50, alpha=0.7, label='Training Data', 
+                   color='skyblue', edgecolor='black')
+    axes[0, 0].hist(submission_predictions, bins=50, alpha=0.7, label='Predictions', 
+                   color='orange', edgecolor='black')
+    axes[0, 0].set_xlabel('Pollution Value')
+    axes[0, 0].set_ylabel('Frequency')
+    axes[0, 0].set_title('Distribution Comparison')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # 2. Summary statistics comparison
+    stats_data = {
+        'Dataset': ['Training', 'Predictions'],
+        'Mean': [y_train.mean(), submission_predictions.mean()],
+        'Std': [y_train.std(), submission_predictions.std()],
+        'Min': [y_train.min(), submission_predictions.min()],
+        'Max': [y_train.max(), submission_predictions.max()],
+        'Median': [y_train.median(), np.median(submission_predictions)]
+    }
+    
+    stats_df = pd.DataFrame(stats_data)
+    x = np.arange(len(stats_df['Dataset']))
+    width = 0.15
+    
+    metrics = ['Mean', 'Std', 'Min', 'Max', 'Median']
+    colors = ['red', 'green', 'blue', 'orange', 'purple']
+    
+    for i, (metric, color) in enumerate(zip(metrics, colors)):
+        axes[0, 1].bar(x + i * width, stats_df[metric], width, 
+                      label=metric, color=color, alpha=0.7)
+    
+    axes[0, 1].set_xlabel('Dataset')
+    axes[0, 1].set_ylabel('Value')
+    axes[0, 1].set_title('Summary Statistics Comparison')
+    axes[0, 1].set_xticks(x + width * 2)
+    axes[0, 1].set_xticklabels(stats_df['Dataset'])
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # 3. Prediction range analysis
+    ranges = [(0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 1.0), (1.0, float('inf'))]
+    range_labels = ['0-0.2', '0.2-0.4', '0.4-0.6', '0.6-0.8', '0.8-1.0', '1.0+']
+    
+    train_counts = []
+    pred_counts = []
+    
+    for low, high in ranges:
+        train_count = ((y_train >= low) & (y_train < high)).sum()
+        pred_count = ((submission_predictions >= low) & (submission_predictions < high)).sum()
+        train_counts.append(train_count)
+        pred_counts.append(pred_count)
+    
+    x = np.arange(len(range_labels))
+    width = 0.35
+    
+    axes[1, 0].bar(x - width/2, train_counts, width, label='Training', 
+                  color='skyblue', alpha=0.7)
+    axes[1, 0].bar(x + width/2, pred_counts, width, label='Predictions', 
+                  color='orange', alpha=0.7)
+    axes[1, 0].set_xlabel('Pollution Value Range')
+    axes[1, 0].set_ylabel('Count')
+    axes[1, 0].set_title('Value Range Distribution')
+    axes[1, 0].set_xticks(x)
+    axes[1, 0].set_xticklabels(range_labels)
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # 4. Cumulative distribution comparison
+    train_sorted = np.sort(y_train)
+    pred_sorted = np.sort(submission_predictions)
+    train_cdf = np.arange(1, len(train_sorted) + 1) / len(train_sorted)
+    pred_cdf = np.arange(1, len(pred_sorted) + 1) / len(pred_sorted)
+    
+    axes[1, 1].plot(train_sorted, train_cdf, label='Training CDF', linewidth=2)
+    axes[1, 1].plot(pred_sorted, pred_cdf, label='Prediction CDF', linewidth=2)
+    axes[1, 1].set_xlabel('Pollution Value')
+    axes[1, 1].set_ylabel('Cumulative Probability')
+    axes[1, 1].set_title('Cumulative Distribution Comparison')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('d:/competition/air pollution/submission_analysis.png', 
+               dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # Print summary statistics
+    print("\nSubmission Statistics Summary:")
+    print("="*40)
+    print(f"Training Data:")
+    print(f"  Mean: {y_train.mean():.4f}")
+    print(f"  Std:  {y_train.std():.4f}")
+    print(f"  Min:  {y_train.min():.4f}")
+    print(f"  Max:  {y_train.max():.4f}")
+    print(f"\nPredictions:")
+    print(f"  Mean: {submission_predictions.mean():.4f}")
+    print(f"  Std:  {submission_predictions.std():.4f}")
+    print(f"  Min:  {submission_predictions.min():.4f}")
+    print(f"  Max:  {submission_predictions.max():.4f}")
+
+# Create submission analysis
+create_submission_analysis(submission_predictions, y_train)
+
+# =====================================
 # 11. FEATURE IMPORTANCE ANALYSIS
 # =====================================
 
@@ -640,15 +1226,123 @@ print("\n" + "="*50)
 print("FEATURE IMPORTANCE ANALYSIS")
 print("="*50)
 
+def create_comprehensive_feature_importance_analysis(lgb_model, rf_model, final_features):
+    """Create comprehensive feature importance visualizations"""
+    print("Creating feature importance analysis...")
+    
+    # Get feature importance from LightGBM
+    lgb_importance = lgb_model.feature_importance(importance_type='gain')
+    feature_importance_df = pd.DataFrame({
+        'feature': final_features,
+        'lgb_importance': lgb_importance,
+        'rf_importance': rf_model.feature_importances_
+    }).sort_values('lgb_importance', ascending=False)
+    
+    # Normalize importances for comparison
+    feature_importance_df['lgb_importance_norm'] = feature_importance_df['lgb_importance'] / feature_importance_df['lgb_importance'].max()
+    feature_importance_df['rf_importance_norm'] = feature_importance_df['rf_importance'] / feature_importance_df['rf_importance'].max()
+    
+    # Create comprehensive visualization
+    fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+    fig.suptitle('Comprehensive Feature Importance Analysis', fontsize=16, fontweight='bold')
+    
+    # 1. Top 15 LightGBM feature importance
+    top_15_lgb = feature_importance_df.head(15)
+    bars1 = axes[0, 0].barh(range(len(top_15_lgb)), top_15_lgb['lgb_importance'], 
+                           color='lightblue', alpha=0.7, edgecolor='black')
+    axes[0, 0].set_yticks(range(len(top_15_lgb)))
+    axes[0, 0].set_yticklabels(top_15_lgb['feature'], fontsize=10)
+    axes[0, 0].set_xlabel('LightGBM Feature Importance')
+    axes[0, 0].set_title('Top 15 Features - LightGBM Importance')
+    axes[0, 0].invert_yaxis()
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # Add value labels
+    for i, (bar, value) in enumerate(zip(bars1, top_15_lgb['lgb_importance'])):
+        axes[0, 0].text(value + max(top_15_lgb['lgb_importance']) * 0.01, bar.get_y() + bar.get_height()/2, 
+                       f'{value:.0f}', va='center', fontsize=9)
+    
+    # 2. Top 15 Random Forest feature importance
+    top_15_rf = feature_importance_df.nlargest(15, 'rf_importance')
+    bars2 = axes[0, 1].barh(range(len(top_15_rf)), top_15_rf['rf_importance'], 
+                           color='lightgreen', alpha=0.7, edgecolor='black')
+    axes[0, 1].set_yticks(range(len(top_15_rf)))
+    axes[0, 1].set_yticklabels(top_15_rf['feature'], fontsize=10)
+    axes[0, 1].set_xlabel('Random Forest Feature Importance')
+    axes[0, 1].set_title('Top 15 Features - Random Forest Importance')
+    axes[0, 1].invert_yaxis()
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # Add value labels
+    for i, (bar, value) in enumerate(zip(bars2, top_15_rf['rf_importance'])):
+        axes[0, 1].text(value + max(top_15_rf['rf_importance']) * 0.01, bar.get_y() + bar.get_height()/2, 
+                       f'{value:.3f}', va='center', fontsize=9)
+    
+    # 3. Feature importance comparison (LightGBM vs Random Forest)
+    top_common = feature_importance_df.head(20)
+    x = np.arange(len(top_common))
+    width = 0.35
+    
+    bars3 = axes[1, 0].bar(x - width/2, top_common['lgb_importance_norm'], width, 
+                          label='LightGBM', color='lightblue', alpha=0.7)
+    bars4 = axes[1, 0].bar(x + width/2, top_common['rf_importance_norm'], width, 
+                          label='Random Forest', color='lightgreen', alpha=0.7)
+    
+    axes[1, 0].set_xlabel('Features')
+    axes[1, 0].set_ylabel('Normalized Importance')
+    axes[1, 0].set_title('Feature Importance Comparison (Top 20)')
+    axes[1, 0].set_xticks(x)
+    axes[1, 0].set_xticklabels(top_common['feature'], rotation=45, ha='right', fontsize=8)
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # 4. Feature importance correlation between models
+    axes[1, 1].scatter(feature_importance_df['lgb_importance_norm'], 
+                      feature_importance_df['rf_importance_norm'], 
+                      alpha=0.6, s=30)
+    
+    # Add correlation line
+    from scipy.stats import pearsonr
+    corr_coef, _ = pearsonr(feature_importance_df['lgb_importance_norm'], 
+                           feature_importance_df['rf_importance_norm'])
+    
+    # Fit line
+    z = np.polyfit(feature_importance_df['lgb_importance_norm'], 
+                   feature_importance_df['rf_importance_norm'], 1)
+    p = np.poly1d(z)
+    axes[1, 1].plot(feature_importance_df['lgb_importance_norm'], 
+                   p(feature_importance_df['lgb_importance_norm']), "r--", alpha=0.8)
+    
+    axes[1, 1].set_xlabel('LightGBM Normalized Importance')
+    axes[1, 1].set_ylabel('Random Forest Normalized Importance')
+    axes[1, 1].set_title(f'Feature Importance Correlation\n(r = {corr_coef:.3f})')
+    axes[1, 1].grid(True, alpha=0.3)
+    
+    # Add correlation text
+    axes[1, 1].text(0.05, 0.95, f'Correlation: {corr_coef:.3f}', 
+                   transform=axes[1, 1].transAxes,
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+                   verticalalignment='top')
+    
+    plt.tight_layout()
+    plt.savefig('d:/competition/air pollution/comprehensive_feature_importance.png', 
+               dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    return feature_importance_df
+
+# Create comprehensive feature importance analysis
+feature_importance_df = create_comprehensive_feature_importance_analysis(lgb_model, rf_model, final_features)
+
 # Get feature importance from LightGBM
 lgb_importance = lgb_model.feature_importance(importance_type='gain')
-feature_importance_df = pd.DataFrame({
+feature_importance_df_simple = pd.DataFrame({
     'feature': final_features,
     'importance': lgb_importance
 }).sort_values('importance', ascending=False)
 
 print("Top 15 most important features:")
-print(feature_importance_df.head(15).to_string(index=False))
+print(feature_importance_df_simple.head(15).to_string(index=False))
 
 # =====================================
 # 12. RESULTS SUMMARY
@@ -671,6 +1365,267 @@ print(f"")
 print(f"Files generated:")
 print(f"- enhanced_automated_submission.csv")
 print(f"- Feature importance analysis completed")
+print("="*60)
+
+# =====================================
+# 13. COMPREHENSIVE SUMMARY VISUALIZATION
+# =====================================
+
+def create_comprehensive_summary_dashboard():
+    """Create a comprehensive summary dashboard"""
+    print("Creating comprehensive summary dashboard...")
+    
+    fig = plt.figure(figsize=(20, 24))
+    fig.suptitle('Air Pollution Prediction Model - Comprehensive Summary', 
+                fontsize=20, fontweight='bold', y=0.98)
+    
+    # Create a grid layout
+    gs = fig.add_gridspec(6, 3, height_ratios=[1, 1, 1, 1, 1, 1], 
+                         width_ratios=[1, 1, 1], hspace=0.3, wspace=0.3)
+    
+    # 1. Feature selection progress
+    ax1 = fig.add_subplot(gs[0, 0])
+    stages = ['Original', 'Statistical', 'Forward', 'Final']
+    counts = [len(existing_features), len(stat_selected_features), 
+              len(forward_features) if forward_features else 0, 
+              len(final_features) if final_features else 0]
+    
+    bars = ax1.bar(stages, counts, color=['lightblue', 'lightgreen', 'orange', 'red'], 
+                  alpha=0.7, edgecolor='black')
+    ax1.set_title('Feature Selection Progress', fontweight='bold')
+    ax1.set_ylabel('Number of Features')
+    ax1.grid(True, alpha=0.3)
+    
+    for bar, count in zip(bars, counts):
+        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, 
+                str(count), ha='center', va='bottom', fontweight='bold')
+    
+    # 2. Model performance comparison
+    ax2 = fig.add_subplot(gs[0, 1])
+    if test_results:
+        test_models = list(test_results.keys())
+        test_rmse = [test_results[model]['rmse'] for model in test_models]
+        
+        bars = ax2.bar(range(len(test_models)), test_rmse, 
+                      color=['lightblue', 'lightgreen', 'orange', 'red'], 
+                      alpha=0.7, edgecolor='black')
+        ax2.set_title('Model RMSE Comparison', fontweight='bold')
+        ax2.set_ylabel('RMSE')
+        ax2.set_xticks(range(len(test_models)))
+        ax2.set_xticklabels([m.replace(' ', '\n') for m in test_models], 
+                           rotation=0, fontsize=9)
+        ax2.grid(True, alpha=0.3)
+        
+        for bar, rmse in zip(bars, test_rmse):
+            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001, 
+                    f'{rmse:.4f}', ha='center', va='bottom', fontweight='bold', fontsize=9)
+    
+    # 3. Ensemble weights
+    ax3 = fig.add_subplot(gs[0, 2])
+    if weights:
+        weight_labels = list(weights.keys())
+        weight_values = list(weights.values())
+        ax3.pie(weight_values, labels=weight_labels, autopct='%1.3f', 
+               colors=['lightcoral', 'lightblue', 'lightgreen'])
+        ax3.set_title('Ensemble Model Weights', fontweight='bold')
+    
+    # 4. Top 10 feature importance
+    ax4 = fig.add_subplot(gs[1, :])
+    if 'feature_importance_df_simple' in locals():
+        top_10 = feature_importance_df_simple.head(10)
+        bars = ax4.barh(range(len(top_10)), top_10['importance'], 
+                       color='skyblue', alpha=0.7, edgecolor='black')
+        ax4.set_yticks(range(len(top_10)))
+        ax4.set_yticklabels(top_10['feature'])
+        ax4.set_xlabel('Feature Importance')
+        ax4.set_title('Top 10 Most Important Features', fontweight='bold')
+        ax4.invert_yaxis()
+        ax4.grid(True, alpha=0.3)
+        
+        for i, (bar, value) in enumerate(zip(bars, top_10['importance'])):
+            ax4.text(value + max(top_10['importance']) * 0.01, 
+                    bar.get_y() + bar.get_height()/2, 
+                    f'{value:.0f}', va='center', fontsize=9)
+    
+    # 5. Data distribution comparison
+    ax5 = fig.add_subplot(gs[2, 0])
+    if 'y_train' in locals():
+        ax5.hist(y_train, bins=30, alpha=0.7, color='skyblue', 
+                edgecolor='black', label='Training')
+        ax5.set_xlabel('Pollution Value')
+        ax5.set_ylabel('Frequency')
+        ax5.set_title('Training Data Distribution', fontweight='bold')
+        ax5.grid(True, alpha=0.3)
+    
+    # 6. Prediction vs Actual (best model)
+    ax6 = fig.add_subplot(gs[2, 1])
+    if test_results and 'ensemble_test' in locals():
+        ax6.scatter(y_test, ensemble_test, alpha=0.5, s=20)
+        min_val = min(y_test.min(), ensemble_test.min())
+        max_val = max(y_test.max(), ensemble_test.max())
+        ax6.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2)
+        ax6.set_xlabel('Actual Values')
+        ax6.set_ylabel('Predicted Values')
+        ax6.set_title('Best Model: Actual vs Predicted', fontweight='bold')
+        ax6.grid(True, alpha=0.3)
+        
+        r2 = r2_score(y_test, ensemble_test)
+        ax6.text(0.05, 0.95, f'R² = {r2:.4f}', transform=ax6.transAxes,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+                verticalalignment='top')
+    
+    # 7. Residuals distribution
+    ax7 = fig.add_subplot(gs[2, 2])
+    if test_results and 'ensemble_test' in locals():
+        residuals = y_test - ensemble_test
+        ax7.hist(residuals, bins=30, alpha=0.7, color='lightcoral', edgecolor='black')
+        ax7.axvline(residuals.mean(), color='red', linestyle='--', 
+                   label=f'Mean: {residuals.mean():.4f}')
+        ax7.set_xlabel('Residuals')
+        ax7.set_ylabel('Frequency')
+        ax7.set_title('Residuals Distribution', fontweight='bold')
+        ax7.legend()
+        ax7.grid(True, alpha=0.3)
+    
+    # 8-10. Time series patterns
+    if 'df_enhanced' in locals():
+        # Hourly pattern
+        ax8 = fig.add_subplot(gs[3, 0])
+        hourly_avg = df_enhanced.groupby('hour')['pollution_value'].mean()
+        ax8.plot(list(hourly_avg.index), list(hourly_avg.values), marker='o', linewidth=2)
+        ax8.set_xlabel('Hour of Day')
+        ax8.set_ylabel('Average Pollution')
+        ax8.set_title('Hourly Pollution Pattern', fontweight='bold')
+        ax8.grid(True, alpha=0.3)
+        ax8.set_xticks(range(0, 24, 4))
+        
+        # Monthly pattern
+        ax9 = fig.add_subplot(gs[3, 1])
+        monthly_avg = df_enhanced.groupby('month')['pollution_value'].mean()
+        ax9.plot(list(monthly_avg.index), list(monthly_avg.values), marker='s', linewidth=2, color='green')
+        ax9.set_xlabel('Month')
+        ax9.set_ylabel('Average Pollution')
+        ax9.set_title('Monthly Pollution Pattern', fontweight='bold')
+        ax9.grid(True, alpha=0.3)
+        ax9.set_xticks(range(1, 13))
+        
+        # Day of week pattern
+        ax10 = fig.add_subplot(gs[3, 2])
+        dow_avg = df_enhanced.groupby('day_of_week')['pollution_value'].mean()
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        bars = ax10.bar(range(7), list(dow_avg.values), color='lightcoral', alpha=0.7, edgecolor='black')
+        ax10.set_xticks(range(7))
+        ax10.set_xticklabels(days, rotation=45)
+        ax10.set_ylabel('Average Pollution')
+        ax10.set_title('Day of Week Pattern', fontweight='bold')
+        ax10.grid(True, alpha=0.3)
+    
+    # 11-13. Geographic and submission analysis
+    if 'df_enhanced' in locals():
+        # Geographic distribution
+        ax11 = fig.add_subplot(gs[4, 0])
+        scatter = ax11.scatter(df_enhanced['longitude'], df_enhanced['latitude'], 
+                             c=df_enhanced['pollution_value'], cmap='viridis', 
+                             alpha=0.6, s=10)
+        ax11.set_xlabel('Longitude')
+        ax11.set_ylabel('Latitude')
+        ax11.set_title('Geographic Pollution Distribution', fontweight='bold')
+        plt.colorbar(scatter, ax=ax11, shrink=0.8)
+    
+    # Submission statistics
+    ax12 = fig.add_subplot(gs[4, 1])
+    if 'submission_predictions' in locals() and 'y_train' in locals():
+        stats_comparison = {
+            'Training': [y_train.mean(), y_train.std(), y_train.min(), y_train.max()],
+            'Predictions': [submission_predictions.mean(), submission_predictions.std(), 
+                          submission_predictions.min(), submission_predictions.max()]
+        }
+        
+        x = np.arange(4)
+        width = 0.35
+        metrics = ['Mean', 'Std', 'Min', 'Max']
+        
+        ax12.bar(x - width/2, stats_comparison['Training'], width, 
+                label='Training', alpha=0.7, color='skyblue')
+        ax12.bar(x + width/2, stats_comparison['Predictions'], width, 
+                label='Predictions', alpha=0.7, color='orange')
+        
+        ax12.set_ylabel('Value')
+        ax12.set_title('Training vs Submission Stats', fontweight='bold')
+        ax12.set_xticks(x)
+        ax12.set_xticklabels(metrics)
+        ax12.legend()
+        ax12.grid(True, alpha=0.3)
+    
+    # Model metrics summary
+    ax13 = fig.add_subplot(gs[4, 2])
+    if test_results:
+        metrics_text = "Model Performance Summary\n" + "="*25 + "\n"
+        for model_name, metrics in test_results.items():
+            metrics_text += f"{model_name}:\n"
+            metrics_text += f"  RMSE: {metrics['rmse']:.4f}\n"
+            metrics_text += f"  MAE:  {metrics['mae']:.4f}\n"
+            metrics_text += f"  R²:   {metrics['r2']:.4f}\n\n"
+        
+        ax13.text(0.05, 0.95, metrics_text, transform=ax13.transAxes,
+                 fontsize=10, verticalalignment='top', fontfamily='monospace',
+                 bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.8))
+        ax13.set_xlim(0, 1)
+        ax13.set_ylim(0, 1)
+        ax13.axis('off')
+        ax13.set_title('Performance Summary', fontweight='bold')
+    
+    # Project summary text
+    ax14 = fig.add_subplot(gs[5, :])
+    summary_text = f"""
+PROJECT SUMMARY - Air Pollution Prediction Model
+{'='*80}
+
+🎯 OBJECTIVE: Predict air pollution values using temporal, geographic, and engineered features
+
+📊 DATA PROCESSING:
+   • Dataset: {len(df_clean):,} samples after cleaning
+   • Features: {len(final_features) if final_features else 0} optimally selected from {len(existing_features)} engineered features
+   • Outliers: Capped at 99th percentile ({np.percentile(df_clean['pollution_value'], 99):.2f})
+
+🔧 FEATURE ENGINEERING:
+   • Base features: Geographic coordinates, temporal features
+   • Advanced features: Industrial/traffic proxies, meteorological patterns, cyclical encodings
+   • Interaction features: Location-time interactions, harmonic patterns
+   • Selection: Statistical → Forward → Backward elimination process
+
+🤖 MODELING APPROACH:
+   • Ensemble of: LightGBM, Random Forest, Huber Regressor
+   • Cross-validation: Time Series Split for temporal consistency
+   • Optimization: Recursive feature selection with performance-based weighting
+
+📈 BEST RESULTS:
+   • Best Model: {best_model if 'best_model' in locals() else 'N/A'}
+   • Test RMSE: {test_results[best_model]['rmse']:.4f if 'best_model' in locals() and best_model in test_results else 'N/A'}
+   • Test R²: {test_results[best_model]['r2']:.4f if 'best_model' in locals() and best_model in test_results else 'N/A'}
+
+📁 OUTPUTS GENERATED:
+   • enhanced_automated_submission.csv - Final predictions
+   • Multiple visualization files for analysis
+   • Feature importance rankings and selection results
+"""
+    
+    ax14.text(0.02, 0.98, summary_text, transform=ax14.transAxes,
+             fontsize=11, verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.9))
+    ax14.set_xlim(0, 1)
+    ax14.set_ylim(0, 1)
+    ax14.axis('off')
+    
+    plt.savefig('d:/competition/air pollution/comprehensive_summary_dashboard.png', 
+               dpi=300, bbox_inches='tight')
+    plt.show()
+
+# Create comprehensive summary dashboard
+create_comprehensive_summary_dashboard()
+
+print("\n" + "="*60)
+print("🎉 ENHANCED VISUALIZATION COMPLETE!")
 print("="*60)
 
 # Save feature selection results
