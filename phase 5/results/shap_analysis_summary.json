@@ -1,0 +1,131 @@
+{
+  "top_features_by_model": {
+    "lightgbm": [
+      {
+        "feature": "distance_from_center",
+        "importance": 0.22900421925349998
+      },
+      {
+        "feature": "feature_median",
+        "importance": 0.0717758509066432
+      },
+      {
+        "feature": "longitude",
+        "importance": 0.05941670695509761
+      },
+      {
+        "feature": "latitude_longitude_interaction",
+        "importance": 0.05049289779990939
+      },
+      {
+        "feature": "weather_proxy",
+        "importance": 0.04050372680005373
+      },
+      {
+        "feature": "latitude_longitude_ratio",
+        "importance": 0.04041325655497505
+      },
+      {
+        "feature": "day_of_year_cos_h1",
+        "importance": 0.03833117103755977
+      },
+      {
+        "feature": "temp_proxy",
+        "importance": 0.0290486155111758
+      },
+      {
+        "feature": "dist_from_lon_min",
+        "importance": 0.0262681605308065
+      },
+      {
+        "feature": "dist_from_lon_max",
+        "importance": 0.024846854246773523
+      }
+    ],
+    "xgboost": [
+      {
+        "feature": "distance_from_center",
+        "importance": "0.13329509"
+      },
+      {
+        "feature": "latitude_longitude_interaction",
+        "importance": "0.054794487"
+      },
+      {
+        "feature": "longitude",
+        "importance": "0.052765086"
+      },
+      {
+        "feature": "feature_median",
+        "importance": "0.052105978"
+      },
+      {
+        "feature": "dist_from_lon_max",
+        "importance": "0.04796405"
+      },
+      {
+        "feature": "weather_proxy",
+        "importance": "0.04562062"
+      },
+      {
+        "feature": "day_of_year_sin_h3",
+        "importance": "0.035567857"
+      },
+      {
+        "feature": "poly_latitude longitude",
+        "importance": "0.035446625"
+      },
+      {
+        "feature": "dist_from_lon_min",
+        "importance": "0.034751933"
+      },
+      {
+        "feature": "latitude_longitude_ratio",
+        "importance": "0.02800738"
+      }
+    ],
+    "randomforest": [
+      {
+        "feature": "distance_from_center",
+        "importance": 0.0654364909033889
+      },
+      {
+        "feature": "longitude",
+        "importance": 0.046223117538162814
+      },
+      {
+        "feature": "dist_from_lon_min",
+        "importance": 0.045213533785376514
+      },
+      {
+        "feature": "dist_from_lon_max",
+        "importance": 0.04465736290537258
+      },
+      {
+        "feature": "latitude_longitude_interaction",
+        "importance": 0.03779404099809296
+      },
+      {
+        "feature": "poly_latitude longitude",
+        "importance": 0.0362373944052886
+      },
+      {
+        "feature": "weather_proxy",
+        "importance": 0.030706704754829204
+      },
+      {
+        "feature": "latitude_longitude_ratio",
+        "importance": 0.02874791073891963
+      },
+      {
+        "feature": "feature_median",
+        "importance": 0.02840225967409309
+      },
+      {
+        "feature": "lon_bin",
+        "importance": 0.025109344864197497
+      }
+    ]
+  },
+  "feature_importance_rankings": {}
+}
